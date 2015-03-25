@@ -10,13 +10,13 @@ import (
 )
 
 var (
-	_EMPTY_DATA = [][]byte{}
+	emptyData = [][]byte{}
 )
 
 type conn struct {
 	con          net.Conn
 	readTimeout  time.Duration
-	recv_buf     bytes.Buffer
+	recvBuf      bytes.Buffer
 	writeTimeout time.Duration
 	idleTimeout  time.Duration
 	mu           sync.Mutex
@@ -67,7 +67,7 @@ func (c *conn) fatal(err error) error {
 
 func (c *conn) parse() [][]byte {
 	resp := [][]byte{}
-	buf := c.recv_buf.Bytes()
+	buf := c.recvBuf.Bytes()
 	var idx, offset int
 	idx = 0
 	offset = 0
@@ -84,7 +84,7 @@ func (c *conn) parse() [][]byte {
 			if len(resp) == 0 {
 				continue
 			} else {
-				c.recv_buf.Next(offset)
+				c.recvBuf.Next(offset)
 				return resp
 			}
 		}
@@ -93,7 +93,7 @@ func (c *conn) parse() [][]byte {
 		if err != nil || size < 0 {
 			return nil
 		}
-		if offset+size >= c.recv_buf.Len() {
+		if offset+size >= c.recvBuf.Len() {
 			break
 		}
 
@@ -111,7 +111,7 @@ func (c *conn) recv() ([][]byte, error) {
 		if err != nil {
 			return nil, err
 		}
-		c.recv_buf.Write(tmp[0:n])
+		c.recvBuf.Write(tmp[0:n])
 		resp := c.parse()
 		if resp == nil || len(resp) > 0 {
 			return resp, nil
@@ -133,7 +133,7 @@ func (c *conn) readReply() (reply *Reply, err error) {
 	if len(resp) > 1 {
 		reply.data = resp[1:]
 	} else {
-		reply.data = _EMPTY_DATA
+		reply.data = emptyData
 	}
 	return
 }

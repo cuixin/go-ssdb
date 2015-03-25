@@ -6,58 +6,61 @@ import (
 )
 
 var (
-	_REPLY_OK           = []byte("ok")
-	_REPLY_NOT_FOUND    = []byte("not_found")
-	_REPLY_ERROR        = []byte("error")
-	_REPLY_FAIL         = []byte("fail")
-	_REPLY_CLIENT_ERROR = []byte("client_error")
+	replyOk          = []byte("ok")
+	replyNotFound    = []byte("not_found")
+	replyError       = []byte("error")
+	replyFail        = []byte("fail")
+	replyClientError = []byte("client_error")
+	replyUndefined   = []byte("undefined")
 )
 
 type State int
 
 func (state State) String() string {
 	switch state {
-	case _OK:
-		return string(_REPLY_OK)
-	case _NOT_FOUND:
-		return string(_REPLY_NOT_FOUND)
-	case _ERROR:
-		return string(_REPLY_ERROR)
-	case _FAIL:
-		return string(_REPLY_FAIL)
-	case _CLIENT_ERROR:
-		return string(_REPLY_CLIENT_ERROR)
+	case okType:
+		return string(replyOk)
+	case notFoundType:
+		return string(replyNotFound)
+	case errorType:
+		return string(replyError)
+	case failType:
+		return string(replyFail)
+	case clientErrorType:
+		return string(replyClientError)
+	case undefinedType:
+		return string(replyUndefined)
 	}
-	return "undefined"
+	return string(replyUndefined)
 }
 
 func (state State) IsOk() bool {
-	return state == _OK
+	return state == okType
 }
 
 func (state State) IsNotFound() bool {
-	return state == _NOT_FOUND
+	return state == notFoundType
 }
 
 func (state State) IsError() bool {
-	return state == _ERROR
+	return state == errorType
 }
 
 func (state State) IsFail() bool {
-	return state == _FAIL
+	return state == failType
 }
 
 func (state State) IsClientError() bool {
-	return state == _CLIENT_ERROR
+	return state == clientErrorType
 }
 
 const (
-	_UNDEFINED = iota
-	_OK
-	_NOT_FOUND
-	_ERROR
-	_FAIL
-	_CLIENT_ERROR
+	undefinedType = iota
+	okType
+	notFoundType
+	errorType
+	failType
+	clientErrorType
 )
 
 type Reply struct {
@@ -66,16 +69,18 @@ type Reply struct {
 }
 
 func (r *Reply) toState(line []byte) {
-	if bytes.Equal(line, _REPLY_OK) {
-		r.State = _OK
-	} else if bytes.Equal(line, _REPLY_NOT_FOUND) {
-		r.State = _NOT_FOUND
-	} else if bytes.Equal(line, _REPLY_ERROR) {
-		r.State = _ERROR
-	} else if bytes.Equal(line, _REPLY_FAIL) {
-		r.State = _FAIL
-	} else if bytes.Equal(line, _REPLY_CLIENT_ERROR) {
-		r.State = _CLIENT_ERROR
+	if bytes.Equal(line, replyOk) {
+		r.State = okType
+	} else if bytes.Equal(line, replyNotFound) {
+		r.State = notFoundType
+	} else if bytes.Equal(line, replyError) {
+		r.State = errorType
+	} else if bytes.Equal(line, replyFail) {
+		r.State = failType
+	} else if bytes.Equal(line, replyClientError) {
+		r.State = clientErrorType
+	} else {
+		r.State = undefinedType
 	}
 }
 
