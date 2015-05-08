@@ -1,10 +1,10 @@
 package ssdb
 
 import (
+	"bufio"
 	"bytes"
 	"fmt"
 	"net"
-	"strconv"
 	"sync"
 	"time"
 )
@@ -16,7 +16,8 @@ var (
 type conn struct {
 	con          net.Conn
 	readTimeout  time.Duration
-	recvBuf      bytes.Buffer
+	recvIn       *bufio.Reader
+	writeBuf     *bytes.Buffer
 	writeTimeout time.Duration
 	idleTimeout  time.Duration
 	mu           sync.Mutex
@@ -47,13 +48,16 @@ func DialTimeout(network, address string, connectTimeout, readTimeout, writeTime
 }
 
 func newConn(netConn net.Conn, readTimeout, writeTimeout, idleTimeout time.Duration) *conn {
-	return &conn{
+	c := &conn{
 		con:          netConn,
+		writeBuf:     bytes.NewBuffer(make([]byte, 8192)),
+		recvIn:       bufio.NewReaderSize(netConn, 8192),
 		readTimeout:  readTimeout,
 		writeTimeout: writeTimeout,
 		mu:           sync.Mutex{},
 		idleTimeout:  idleTimeout,
 	}
+	return c
 }
 
 func (c *conn) Close() error {
@@ -65,65 +69,76 @@ func (c *conn) fatal(err error) error {
 	return err
 }
 
-func (c *conn) parse() [][]byte {
-	resp := [][]byte{}
-	buf := c.recvBuf.Bytes()
-	var idx, offset int
-	idx = 0
-	offset = 0
-
-	for {
-		idx = bytes.IndexByte(buf[offset:], '\n')
-		if idx == -1 {
-			break
-		}
-		p := buf[offset : offset+idx]
-		offset += idx + 1
-		//		fmt.Printf("> [%s]\n", p)
-		if len(p) == 0 || (len(p) == 1 && p[0] == '\r') {
-			if len(resp) == 0 {
-				continue
-			} else {
-				c.recvBuf.Next(offset)
-				return resp
-			}
-		}
-
-		size, err := strconv.Atoi(string(p))
-		if err != nil || size < 0 {
-			return nil
-		}
-		if offset+size >= c.recvBuf.Len() {
-			break
-		}
-
-		v := buf[offset : offset+size]
-		resp = append(resp, v)
-		offset += size + 1
+func (c *conn) readBlock() ([]byte, error) {
+	var (
+		len int
+		err error
+		d   byte
+	)
+	len = 0
+	d, err = c.recvIn.ReadByte()
+	if err != nil {
+		return nil, err
 	}
-	return [][]byte{}
-}
-
-func (c *conn) recv() ([][]byte, error) {
-	var tmp [8192]byte
+	if d == '\n' {
+		return nil, nil
+	} else if d >= '0' && d <= '9' {
+		len = len*10 + int(d-'0')
+	} else {
+		return nil, fmt.Errorf("protocol error. unexpect byte=%d", d)
+	}
 	for {
-		n, err := c.con.Read(tmp[0:])
+		d, err = c.recvIn.ReadByte()
 		if err != nil {
 			return nil, err
 		}
-		c.recvBuf.Write(tmp[0:n])
-		resp := c.parse()
-		if resp == nil || len(resp) > 0 {
-			return resp, nil
+		if d >= '0' && d <= '9' {
+			len = len*10 + int(d-'0')
+		} else if d == '\n' {
+			break
+		} else {
+			return nil, fmt.Errorf("protocol error. unexpect byte=%d", d)
 		}
 	}
+	data := make([]byte, len)
+	if len > 0 {
+		count := 0
+		r := 0
+		for count < len {
+			r, err = c.recvIn.Read(data[count:])
+			if err != nil {
+				return nil, err
+			}
+			count += r
+		}
+	}
+	d, err = c.recvIn.ReadByte()
+	if err != nil {
+		return nil, err
+	}
+	if d != '\n' {
+		return nil, fmt.Errorf("protocol error. unexpect byte=%d", d)
+	}
+	return data, nil
 }
 
 func (c *conn) readReply() (reply *Reply, err error) {
 	var resp [][]byte
-	resp, err = c.recv()
+	var data []byte
+	data, err = c.readBlock()
 	if err != nil {
 		return
+	}
+	resp = append(resp, data)
+	for {
+		data, err = c.readBlock()
+		if err != nil {
+			return
+		}
+		if data == nil {
+			break
+		}
+		resp = append(resp, data)
 	}
 	if len(resp) < 1 {
 		return nil, fmt.Errorf("ssdb: parse error")
@@ -138,18 +153,25 @@ func (c *conn) readReply() (reply *Reply, err error) {
 	return
 }
 
-func (c *conn) writeCommand(cmd string, args []interface{}) error {
-	var buf bytes.Buffer
-	buf.WriteString(fmt.Sprintf("%d", len(cmd)))
-	buf.WriteByte('\n')
-	buf.WriteString(cmd)
-	buf.WriteByte('\n')
+func (c *conn) writeBlock(cmd string) {
+	c.writeBuf.WriteString(fmt.Sprintf("%d", len(cmd)))
+	c.writeBuf.WriteByte('\n')
+	c.writeBuf.WriteString(cmd)
+	c.writeBuf.WriteByte('\n')
+}
 
+func (c *conn) writeCommand(cmd string, args []interface{}) error {
+	c.writeBuf.Reset()
+	c.writeBlock(cmd)
 	for _, arg := range args {
 		var s string
 		switch arg := arg.(type) {
 		case string:
 			s = arg
+		case []string:
+			for i, _ := range arg {
+				c.writeBlock(arg[i])
+			}
 		case []byte:
 			s = string(arg)
 		case int, int8, int16, int32, int64:
@@ -169,14 +191,10 @@ func (c *conn) writeCommand(cmd string, args []interface{}) error {
 		default:
 			return fmt.Errorf("bad arguments")
 		}
-		buf.WriteString(fmt.Sprintf("%d", len(s)))
-		buf.WriteByte('\n')
-		buf.WriteString(s)
-		buf.WriteByte('\n')
+		c.writeBlock(s)
 	}
-	buf.WriteByte('\n')
-	//	fmt.Println("write", buf.Bytes())
-	_, err := c.con.Write(buf.Bytes())
+	c.writeBuf.WriteByte('\n')
+	_, err := c.con.Write(c.writeBuf.Bytes())
 	return err
 }
 
@@ -195,15 +213,12 @@ func (c *conn) Do(cmd string, args ...interface{}) (*Reply, error) {
 		c.con.SetWriteDeadline(time.Now().Add(c.writeTimeout))
 	}
 	c.mu.Lock()
-	if cmd != "" {
-		c.writeCommand(cmd, args)
-	}
+	c.writeCommand(cmd, args)
 
 	if c.readTimeout != 0 {
 		c.con.SetReadDeadline(time.Now().Add(c.readTimeout))
 	}
 
-	//	fmt.Println("Do ", cmd, args, pending)
 	var err error
 	var reply *Reply
 	if reply, err = c.readReply(); err != nil {
