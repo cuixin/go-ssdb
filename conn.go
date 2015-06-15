@@ -21,7 +21,7 @@ type conn struct {
 	writeTimeout time.Duration
 	idleTimeout  time.Duration
 	mu           sync.Mutex
-	timeMu       sync.Mutex
+	timeMu       sync.RWMutex
 	lastDbTime   time.Time
 }
 
@@ -56,7 +56,7 @@ func newConn(netConn net.Conn, readTimeout, writeTimeout, idleTimeout time.Durat
 		readTimeout:  readTimeout,
 		writeTimeout: writeTimeout,
 		mu:           sync.Mutex{},
-		timeMu:       sync.Mutex{},
+		timeMu:       sync.RWMutex{},
 		idleTimeout:  idleTimeout,
 	}
 	return c
@@ -201,9 +201,9 @@ func (c *conn) writeCommand(cmd string, args []interface{}) error {
 }
 
 func (c *conn) Ping(now time.Time) {
-	c.timeMu.Lock()
+	c.timeMu.RLock()
 	t := c.lastDbTime.Add(c.idleTimeout)
-	c.timeMu.Unlock()
+	c.timeMu.RUnlock()
 	if now.After(t) {
 		c.Do("ping")
 	}
