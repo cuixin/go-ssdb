@@ -11,12 +11,19 @@ var pool *Pool
 var poolErr error
 
 func init() {
-	pool, poolErr = NewPool("192.168.1.23:8888",
-		time.Duration(time.Second),
-		time.Duration(time.Second*3),
-		time.Duration(time.Second*2),
-		time.Duration(time.Second*60),
-		64)
+	pool, poolErr = NewPool(
+		&Options{
+			Addr:           "192.168.1.23:8888",
+			Network:        "tcp",
+			PoolSize:       16,
+			ConnectTimeout: time.Duration(time.Second),
+			ReadTimeout:    time.Duration(time.Second * 3),
+			WriteTimeout:   time.Duration(time.Second * 2),
+			IdleTimeout:    time.Duration(time.Second * 60),
+			OnConnEvent: func(msg string) {
+				fmt.Println(msg)
+			},
+		})
 	if poolErr != nil {
 		panic(poolErr)
 	}
@@ -69,6 +76,6 @@ func TestGoroutine(t *testing.T) {
 		go doTimes(10000)
 	}
 	routineWait.Wait()
-	pool.Close()
+	pool.Release()
 	fmt.Println("Routine is OK")
 }

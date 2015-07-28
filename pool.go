@@ -12,35 +12,56 @@ type Pool struct {
 	ticker *time.Ticker
 }
 
-func NewPool(addr string, c, r, w, i time.Duration, maxCons int) (*Pool, error) {
+var (
+	releaseWait sync.WaitGroup
+)
+
+func NewPool(opt *Options) (*Pool, error) {
+	options = opt
 	pool := &Pool{
 		mu:     sync.Mutex{},
-		cons:   make([]*conn, maxCons),
+		cons:   make([]*conn, options.PoolSize),
 		curr:   0,
 		ticker: time.NewTicker(time.Duration(5 * time.Second)),
 	}
-	for j := 0; j < maxCons; j++ {
-		conn, err := DialTimeout("tcp", addr, c, r, w, i)
+	for j := 0; j < options.PoolSize; j++ {
+		netcon, err := dial()
 		if err != nil {
 			return nil, err
 		}
-		pool.cons[j] = conn
+		pool.cons[j] = newConn(netcon)
 	}
 	go func() {
 		for t := range pool.ticker.C {
 			// check alive
-			for _, c := range pool.cons {
-				c.Ping(t)
+			for i, c := range pool.cons {
+				err := c.Ping(t)
+				if err != nil {
+					// reconnect
+					if options.OnConnEvent != nil {
+						options.OnConnEvent("Ping failed, start to reconnect!")
+					}
+					newcon, newerr := dial()
+					if newerr == nil {
+						pool.cons[i].mu.Lock()
+						pool.cons[i].con = newcon
+						pool.cons[i].mu.Unlock()
+						if options.OnConnEvent != nil {
+							options.OnConnEvent("Start reconnecting successful on ping!")
+						}
+					}
+				}
 			}
 		}
 	}()
 	return pool, nil
 }
 
-func (p *Pool) Close() {
+func (p *Pool) Release() {
 	p.ticker.Stop()
+	releaseWait.Wait()
 	for _, c := range p.cons {
-		c.Close()
+		c.close()
 	}
 	return
 }
@@ -54,5 +75,8 @@ func (p *Pool) Do(cmd string, args ...interface{}) (*Reply, error) {
 	c := p.cons[p.curr]
 	p.curr++
 	p.mu.Unlock()
-	return c.Do(cmd, args...)
+	releaseWait.Add(1)
+	reply, err := c.Do(cmd, args...)
+	releaseWait.Done()
+	return reply, err
 }

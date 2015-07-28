@@ -11,58 +11,42 @@ import (
 
 var (
 	emptyData = [][]byte{}
+	options   *Options
 )
 
-type conn struct {
-	con          net.Conn
-	readTimeout  time.Duration
-	recvIn       *bufio.Reader
-	writeBuf     *bytes.Buffer
-	writeTimeout time.Duration
-	idleTimeout  time.Duration
-	mu           sync.Mutex
-	timeMu       sync.RWMutex
-	lastDbTime   time.Time
-}
-
-func Dial(network, address string) (*conn, error) {
-	c, err := net.Dial(network, address)
-	if err != nil {
-		return nil, err
+type (
+	conn struct {
+		con        net.Conn
+		recvIn     *bufio.Reader
+		writeBuf   *bytes.Buffer
+		mu         sync.Mutex
+		lastDbTime time.Time
 	}
+)
 
-	return newConn(c, 0, 0, time.Duration(60*time.Second)), nil
-}
-
-func DialTimeout(network, address string, connectTimeout, readTimeout, writeTimeout, idleTimeout time.Duration) (*conn, error) {
+func dial() (net.Conn, error) {
 	var c net.Conn
 	var err error
-	if connectTimeout > 0 {
-		c, err = net.DialTimeout(network, address, connectTimeout)
+	if options.ConnectTimeout > 0 {
+		c, err = net.DialTimeout(options.Network, options.Addr, options.ConnectTimeout)
 	} else {
-		c, err = net.Dial(network, address)
+		c, err = net.Dial(options.Network, options.Addr)
 	}
-	if err != nil {
-		return nil, err
-	}
-	return newConn(c, readTimeout, writeTimeout, idleTimeout), nil
+	return c, err
 }
 
-func newConn(netConn net.Conn, readTimeout, writeTimeout, idleTimeout time.Duration) *conn {
+func newConn(netConn net.Conn) *conn {
 	c := &conn{
-		con:          netConn,
-		writeBuf:     bytes.NewBuffer(make([]byte, 8192)),
-		recvIn:       bufio.NewReaderSize(netConn, 8192),
-		readTimeout:  readTimeout,
-		writeTimeout: writeTimeout,
-		mu:           sync.Mutex{},
-		timeMu:       sync.RWMutex{},
-		idleTimeout:  idleTimeout,
+		con:        netConn,
+		writeBuf:   bytes.NewBuffer(make([]byte, 8192)),
+		recvIn:     bufio.NewReaderSize(netConn, 8192),
+		mu:         sync.Mutex{},
+		lastDbTime: time.Now(),
 	}
 	return c
 }
 
-func (c *conn) Close() error {
+func (c *conn) close() error {
 	return c.con.Close()
 }
 
@@ -200,13 +184,12 @@ func (c *conn) writeCommand(cmd string, args []interface{}) error {
 	return err
 }
 
-func (c *conn) Ping(now time.Time) {
-	c.timeMu.RLock()
-	t := c.lastDbTime.Add(c.idleTimeout)
-	c.timeMu.RUnlock()
-	if now.After(t) {
-		c.Do("ping")
+func (c *conn) Ping(now time.Time) error {
+	if now.After(c.lastDbTime.Add(options.IdleTimeout)) {
+		_, err := c.Do("ping")
+		return err
 	}
+	return nil
 }
 
 func (c *conn) Do(cmd string, args ...interface{}) (*Reply, error) {
@@ -214,28 +197,42 @@ func (c *conn) Do(cmd string, args ...interface{}) (*Reply, error) {
 		return nil, nil
 	}
 
-	if c.writeTimeout != 0 {
-		c.con.SetWriteDeadline(time.Now().Add(c.writeTimeout))
-	}
-	c.mu.Lock()
-	c.writeCommand(cmd, args)
-
-	if c.readTimeout != 0 {
-		c.con.SetReadDeadline(time.Now().Add(c.readTimeout))
+	if options.WriteTimeout != 0 {
+		c.con.SetWriteDeadline(time.Now().Add(options.WriteTimeout))
 	}
 
 	var err error
 	var reply *Reply
+
+	c.mu.Lock()
+	for {
+		var netC net.Conn
+		err = c.writeCommand(cmd, args)
+		if err != nil {
+			if options.OnConnEvent != nil {
+				options.OnConnEvent(fmt.Sprintf("On write command error %v [%v]", err, cmd))
+			}
+			time.Sleep(100 * time.Microsecond)
+			netC, err = dial()
+			if err == nil {
+				options.OnConnEvent(fmt.Sprintf("On reconnected successful! [%v]", cmd))
+				c.con = netC
+			}
+		} else {
+			break
+		}
+	}
+
+	if options.ReadTimeout != 0 {
+		c.con.SetReadDeadline(time.Now().Add(options.ReadTimeout))
+	}
+
 	if reply, err = c.readReply(); err != nil {
-		c.timeMu.Lock()
 		c.lastDbTime = time.Now()
-		c.timeMu.Unlock()
 		c.mu.Unlock()
-		return nil, c.fatal(err)
+		return nil, err
 	} else {
-		c.timeMu.Lock()
 		c.lastDbTime = time.Now()
-		c.timeMu.Unlock()
 		c.mu.Unlock()
 		return reply, nil
 	}
