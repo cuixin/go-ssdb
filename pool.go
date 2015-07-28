@@ -34,23 +34,8 @@ func NewPool(opt *Options) (*Pool, error) {
 	go func() {
 		for t := range pool.ticker.C {
 			// check alive
-			for i, c := range pool.cons {
-				err := c.Ping(t)
-				if err != nil {
-					// reconnect
-					if options.OnConnEvent != nil {
-						options.OnConnEvent("Ping failed, start to reconnect!")
-					}
-					newcon, newerr := dial()
-					if newerr == nil {
-						pool.cons[i].mu.Lock()
-						pool.cons[i].con = newcon
-						pool.cons[i].mu.Unlock()
-						if options.OnConnEvent != nil {
-							options.OnConnEvent("Start reconnecting successful on ping!")
-						}
-					}
-				}
+			for _, c := range pool.cons {
+				c.Ping(t)
 			}
 		}
 	}()
@@ -66,7 +51,7 @@ func (p *Pool) Release() {
 	return
 }
 
-func (p *Pool) Do(cmd string, args ...interface{}) (*Reply, error) {
+func (p *Pool) Do(cmd string, args ...interface{}) *Reply {
 	p.mu.Lock()
 
 	if p.curr == len(p.cons) {
@@ -76,7 +61,7 @@ func (p *Pool) Do(cmd string, args ...interface{}) (*Reply, error) {
 	p.curr++
 	p.mu.Unlock()
 	releaseWait.Add(1)
-	reply, err := c.Do(cmd, args...)
+	reply := c.Do(cmd, args...)
 	releaseWait.Done()
-	return reply, err
+	return reply
 }

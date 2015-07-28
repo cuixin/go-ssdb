@@ -32,11 +32,10 @@ func init() {
 func TestData(t *testing.T) {
 	var (
 		reply *Reply
-		err   error
 	)
 
-	reply, err = pool.Do("hset", "aaaaa", 1000, 1000)
-	t.Log(reply.String(), err)
+	reply = pool.Do("hset", "aaaaa", 1000, 1000)
+	t.Log(reply.String())
 	data := []byte("hello world")
 	wData := make([]byte, len(data)*1000)
 	s := len(data)
@@ -47,13 +46,13 @@ func TestData(t *testing.T) {
 	}
 
 	for i := 0; i < 10; i++ {
-		reply, err = pool.Do("hset", "bbbbb", i, wData)
-		t.Log(reply.String(), err)
+		reply = pool.Do("hset", "bbbbb", i, wData)
+		t.Log(reply.String())
 	}
-	reply, err = pool.Do("hclear", "aaaaa")
-	t.Log(reply.String(), err)
-	reply, err = pool.Do("hclear", "bbbbb")
-	t.Log(reply.String(), err)
+	reply = pool.Do("hclear", "aaaaa")
+	t.Log(reply.String())
+	reply = pool.Do("hclear", "bbbbb")
+	t.Log(reply.String())
 }
 
 var routineWait = &sync.WaitGroup{}

@@ -111,6 +111,7 @@ func (c *conn) readBlock() ([]byte, error) {
 func (c *conn) readReply() (reply *Reply, err error) {
 	var resp [][]byte
 	var data []byte
+	reply = new(Reply)
 	data, err = c.readBlock()
 	if err != nil {
 		return
@@ -129,7 +130,6 @@ func (c *conn) readReply() (reply *Reply, err error) {
 	if len(resp) < 1 {
 		return nil, fmt.Errorf("ssdb: parse error")
 	}
-	reply = new(Reply)
 	reply.toState(resp[0])
 	if len(resp) > 1 {
 		reply.data = resp[1:]
@@ -184,56 +184,51 @@ func (c *conn) writeCommand(cmd string, args []interface{}) error {
 	return err
 }
 
-func (c *conn) Ping(now time.Time) error {
+func (c *conn) Ping(now time.Time) {
 	if now.After(c.lastDbTime.Add(options.IdleTimeout)) {
-		_, err := c.Do("ping")
-		return err
+		c.Do("ping")
 	}
-	return nil
 }
 
-func (c *conn) Do(cmd string, args ...interface{}) (*Reply, error) {
-	if cmd == "" {
-		return nil, nil
+func doReconnect(c *conn, err error, cmd string) {
+	for {
+		if options.OnConnEvent != nil {
+			options.OnConnEvent(fmt.Sprintf("On write command error %v [%v]", err, cmd))
+		}
+		time.Sleep(100 * time.Microsecond)
+		netC, err := dial()
+		if err == nil {
+			options.OnConnEvent(fmt.Sprintf("On reconnected successful! [%v]", cmd))
+			c.con = netC
+			break
+		}
 	}
+}
 
-	if options.WriteTimeout != 0 {
-		c.con.SetWriteDeadline(time.Now().Add(options.WriteTimeout))
-	}
-
+func (c *conn) Do(cmd string, args ...interface{}) *Reply {
 	var err error
 	var reply *Reply
-
 	c.mu.Lock()
 	for {
-		var netC net.Conn
+		if options.WriteTimeout != 0 {
+			c.con.SetWriteDeadline(time.Now().Add(options.WriteTimeout))
+		}
 		err = c.writeCommand(cmd, args)
 		if err != nil {
-			if options.OnConnEvent != nil {
-				options.OnConnEvent(fmt.Sprintf("On write command error %v [%v]", err, cmd))
-			}
-			time.Sleep(100 * time.Microsecond)
-			netC, err = dial()
-			if err == nil {
-				options.OnConnEvent(fmt.Sprintf("On reconnected successful! [%v]", cmd))
-				c.con = netC
-			}
+			doReconnect(c, err, cmd)
+		}
+		if options.ReadTimeout != 0 {
+			c.con.SetReadDeadline(time.Now().Add(options.ReadTimeout))
+		}
+
+		reply, err = c.readReply()
+		c.lastDbTime = time.Now()
+		if err != nil {
+			doReconnect(c, err, cmd)
 		} else {
 			break
 		}
 	}
-
-	if options.ReadTimeout != 0 {
-		c.con.SetReadDeadline(time.Now().Add(options.ReadTimeout))
-	}
-
-	if reply, err = c.readReply(); err != nil {
-		c.lastDbTime = time.Now()
-		c.mu.Unlock()
-		return nil, err
-	} else {
-		c.lastDbTime = time.Now()
-		c.mu.Unlock()
-		return reply, nil
-	}
+	c.mu.Unlock()
+	return reply
 }
