@@ -24,15 +24,13 @@ type (
 	}
 )
 
-func dial() (net.Conn, error) {
-	var c net.Conn
-	var err error
+func dial() (c net.Conn, err error) {
 	if options.ConnectTimeout > 0 {
 		c, err = net.DialTimeout(options.Network, options.Addr, options.ConnectTimeout)
 	} else {
 		c, err = net.Dial(options.Network, options.Addr)
 	}
-	return c, err
+	return
 }
 
 func newConn(netConn net.Conn) *conn {
@@ -193,12 +191,12 @@ func (c *conn) Ping(now time.Time) {
 func doReconnect(c *conn, err error, cmd string) {
 	for {
 		if options.OnConnEvent != nil {
-			options.OnConnEvent(fmt.Sprintf("On write command error [%v] [%v]", err, cmd))
+			options.OnConnEvent(fmt.Sprintf("On write command error [%v] [%v] [%p]", err, cmd, c))
 		}
 		time.Sleep(100 * time.Microsecond)
 		netC, err := dial()
 		if err == nil {
-			options.OnConnEvent(fmt.Sprintf("On reconnected successful! [%v]", cmd))
+			options.OnConnEvent(fmt.Sprintf("On reconnected successful! [%v] [%p]", cmd, c))
 			c.sock = netC
 			c.recvBuf = bufio.NewReaderSize(c.sock, 8192)
 			break
@@ -219,6 +217,7 @@ func (c *conn) Do(cmd string, args ...interface{}) *Reply {
 		err = c.writeCommand(cmd, args)
 		if err != nil {
 			doReconnect(c, err, cmd)
+			continue
 		}
 		if options.ReadTimeout != 0 {
 			c.sock.SetReadDeadline(time.Now().Add(options.ReadTimeout))
