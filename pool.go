@@ -53,7 +53,6 @@ func (p *Pool) Release() {
 
 func (p *Pool) Do(cmd string, args ...interface{}) *Reply {
 	p.mu.Lock()
-
 	if p.curr == len(p.cons) {
 		p.curr = 0
 	}

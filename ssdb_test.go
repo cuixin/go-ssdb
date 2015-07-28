@@ -13,7 +13,7 @@ var poolErr error
 func init() {
 	pool, poolErr = NewPool(
 		&Options{
-			Addr:           "192.168.1.23:8888",
+			Addr:           "localhost:8888",
 			Network:        "tcp",
 			PoolSize:       16,
 			ConnectTimeout: time.Duration(time.Second),

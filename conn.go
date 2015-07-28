@@ -16,8 +16,8 @@ var (
 
 type (
 	conn struct {
-		con        net.Conn
-		recvIn     *bufio.Reader
+		sock       net.Conn
+		recvBuf    *bufio.Reader
 		writeBuf   *bytes.Buffer
 		mu         sync.Mutex
 		lastDbTime time.Time
@@ -37,9 +37,9 @@ func dial() (net.Conn, error) {
 
 func newConn(netConn net.Conn) *conn {
 	c := &conn{
-		con:        netConn,
+		sock:       netConn,
 		writeBuf:   bytes.NewBuffer(make([]byte, 8192)),
-		recvIn:     bufio.NewReaderSize(netConn, 8192),
+		recvBuf:    bufio.NewReaderSize(netConn, 8192),
 		mu:         sync.Mutex{},
 		lastDbTime: time.Now(),
 	}
@@ -47,11 +47,11 @@ func newConn(netConn net.Conn) *conn {
 }
 
 func (c *conn) close() error {
-	return c.con.Close()
+	return c.sock.Close()
 }
 
 func (c *conn) fatal(err error) error {
-	c.con.Close()
+	c.sock.Close()
 	return err
 }
 
@@ -62,7 +62,7 @@ func (c *conn) readBlock() ([]byte, error) {
 		d   byte
 	)
 	len = 0
-	d, err = c.recvIn.ReadByte()
+	d, err = c.recvBuf.ReadByte()
 	if err != nil {
 		return nil, err
 	}
@@ -74,7 +74,7 @@ func (c *conn) readBlock() ([]byte, error) {
 		return nil, fmt.Errorf("protocol error. unexpect byte=%d", d)
 	}
 	for {
-		d, err = c.recvIn.ReadByte()
+		d, err = c.recvBuf.ReadByte()
 		if err != nil {
 			return nil, err
 		}
@@ -91,14 +91,14 @@ func (c *conn) readBlock() ([]byte, error) {
 		count := 0
 		r := 0
 		for count < len {
-			r, err = c.recvIn.Read(data[count:])
+			r, err = c.recvBuf.Read(data[count:])
 			if err != nil {
 				return nil, err
 			}
 			count += r
 		}
 	}
-	d, err = c.recvIn.ReadByte()
+	d, err = c.recvBuf.ReadByte()
 	if err != nil {
 		return nil, err
 	}
@@ -180,7 +180,7 @@ func (c *conn) writeCommand(cmd string, args []interface{}) error {
 		c.writeBlock(s)
 	}
 	c.writeBuf.WriteByte('\n')
-	_, err := c.con.Write(c.writeBuf.Bytes())
+	_, err := c.sock.Write(c.writeBuf.Bytes())
 	return err
 }
 
@@ -193,32 +193,35 @@ func (c *conn) Ping(now time.Time) {
 func doReconnect(c *conn, err error, cmd string) {
 	for {
 		if options.OnConnEvent != nil {
-			options.OnConnEvent(fmt.Sprintf("On write command error %v [%v]", err, cmd))
+			options.OnConnEvent(fmt.Sprintf("On write command error [%v] [%v]", err, cmd))
 		}
 		time.Sleep(100 * time.Microsecond)
 		netC, err := dial()
 		if err == nil {
 			options.OnConnEvent(fmt.Sprintf("On reconnected successful! [%v]", cmd))
-			c.con = netC
+			c.sock = netC
+			c.recvBuf = bufio.NewReaderSize(c.sock, 8192)
 			break
 		}
 	}
 }
 
 func (c *conn) Do(cmd string, args ...interface{}) *Reply {
-	var err error
-	var reply *Reply
+	var (
+		err   error
+		reply *Reply
+	)
 	c.mu.Lock()
 	for {
 		if options.WriteTimeout != 0 {
-			c.con.SetWriteDeadline(time.Now().Add(options.WriteTimeout))
+			c.sock.SetWriteDeadline(time.Now().Add(options.WriteTimeout))
 		}
 		err = c.writeCommand(cmd, args)
 		if err != nil {
 			doReconnect(c, err, cmd)
 		}
 		if options.ReadTimeout != 0 {
-			c.con.SetReadDeadline(time.Now().Add(options.ReadTimeout))
+			c.sock.SetReadDeadline(time.Now().Add(options.ReadTimeout))
 		}
 
 		reply, err = c.readReply()
