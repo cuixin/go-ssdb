@@ -106,6 +106,19 @@ func (r *Reply) Bytes() []byte {
 	return []byte{}
 }
 
+func (r *Reply) BytesArray() [][]byte {
+	size := len(r.data)
+	if size > 0 {
+		ret := make([][]byte, size)
+		for i := 0; i < size; i++ {
+			ret[i] = make([]byte, len(r.data[i]))
+			ret[i] = r.data[i]
+		}
+		return ret
+	}
+	return [][]byte{}
+}
+
 func (r *Reply) Int64() int64 {
 	if len(r.data) == 0 {
 		return 0
