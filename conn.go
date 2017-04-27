@@ -11,7 +11,6 @@ import (
 
 var (
 	emptyData = [][]byte{}
-	options   *Options
 )
 
 type (
@@ -21,10 +20,11 @@ type (
 		writeBuf   *bytes.Buffer
 		mu         sync.Mutex
 		lastDbTime time.Time
+		options    *Options
 	}
 )
 
-func dial() (c net.Conn, err error) {
+func dial(options *Options) (c net.Conn, err error) {
 	if options.ConnectTimeout > 0 {
 		c, err = net.DialTimeout(options.Network, options.Addr, options.ConnectTimeout)
 	} else {
@@ -33,13 +33,14 @@ func dial() (c net.Conn, err error) {
 	return
 }
 
-func newConn(netConn net.Conn) *conn {
+func newConn(netConn net.Conn, options *Options) *conn {
 	c := &conn{
 		sock:       netConn,
 		writeBuf:   bytes.NewBuffer(make([]byte, 8192)),
 		recvBuf:    bufio.NewReaderSize(netConn, 8192),
 		mu:         sync.Mutex{},
 		lastDbTime: time.Now(),
+		options:    options,
 	}
 	return c
 }
@@ -183,20 +184,20 @@ func (c *conn) writeCommand(cmd string, args []interface{}) error {
 }
 
 func (c *conn) Ping(now time.Time) {
-	if now.After(c.lastDbTime.Add(options.IdleTimeout)) {
+	if now.After(c.lastDbTime.Add(c.options.IdleTimeout)) {
 		c.Do("ping")
 	}
 }
 
 func doReconnect(c *conn, err error, cmd string) {
 	for {
-		if options.OnConnEvent != nil {
-			options.OnConnEvent(fmt.Sprintf("On write command error [%v] [%v] [%p]", err, cmd, c))
+		if c.options.OnConnEvent != nil {
+			c.options.OnConnEvent(fmt.Sprintf("On write command error [%v] [%v] [%p]", err, cmd, c))
 		}
 		time.Sleep(100 * time.Microsecond)
-		netC, err := dial()
+		netC, err := dial(c.options)
 		if err == nil {
-			options.OnConnEvent(fmt.Sprintf("On reconnected successful! [%v] [%p]", cmd, c))
+			c.options.OnConnEvent(fmt.Sprintf("On reconnected successful! [%v] [%p]", cmd, c))
 			c.sock = netC
 			c.recvBuf = bufio.NewReaderSize(c.sock, 8192)
 			break
@@ -211,16 +212,16 @@ func (c *conn) Do(cmd string, args ...interface{}) *Reply {
 	)
 	c.mu.Lock()
 	for {
-		if options.WriteTimeout != 0 {
-			c.sock.SetWriteDeadline(time.Now().Add(options.WriteTimeout))
+		if c.options.WriteTimeout != 0 {
+			c.sock.SetWriteDeadline(time.Now().Add(c.options.WriteTimeout))
 		}
 		err = c.writeCommand(cmd, args)
 		if err != nil {
 			doReconnect(c, err, cmd)
 			continue
 		}
-		if options.ReadTimeout != 0 {
-			c.sock.SetReadDeadline(time.Now().Add(options.ReadTimeout))
+		if c.options.ReadTimeout != 0 {
+			c.sock.SetReadDeadline(time.Now().Add(c.options.ReadTimeout))
 		}
 
 		reply, err = c.readReply()

@@ -1,6 +1,7 @@
 package ssdb
 
 import (
+	"encoding/base64"
 	"fmt"
 	"sync"
 	"testing"
@@ -72,9 +73,30 @@ func TestGoroutine(t *testing.T) {
 	size := 30
 	routineWait.Add(size)
 	for i := 0; i < size; i++ {
-		go doTimes(10000)
+		go doTimes(1000)
 	}
 	routineWait.Wait()
-	pool.Release()
 	fmt.Println("Routine is OK")
+}
+
+func TestMulti_Get_Order(t *testing.T) {
+	for i := 0; i < 100; i++ {
+		pool.Do("hset", "test", i, i)
+	}
+	target := make([]string, 100)
+	for i := 0; i < 100; i++ {
+		target[i] = fmt.Sprintf("%d", i)
+	}
+	reply := pool.Do("multi_hget", "test", target)
+	strs := reply.Strings()
+	for i := 0; i < len(strs); i += 2 {
+		t.Log("Result", strs[i], strs[i+1])
+	}
+	pool.Do("hclear", "test")
+}
+
+func TestAAA(t *testing.T) {
+	reply := pool.Do("hget", "player:base:info", 1001)
+	t.Log(base64.StdEncoding.EncodeToString(reply.Bytes()))
+	pool.Release()
 }
