@@ -194,7 +194,7 @@ func doReconnect(c *conn, err error, cmd string) {
 		if c.options.OnConnEvent != nil {
 			c.options.OnConnEvent(fmt.Sprintf("On write command error [%v] [%v] [%p]", err, cmd, c))
 		}
-		time.Sleep(100 * time.Microsecond)
+		time.Sleep(time.Second)
 		netC, err := dial(c.options)
 		if err == nil {
 			c.options.OnConnEvent(fmt.Sprintf("On reconnected successful! [%v] [%p]", cmd, c))
