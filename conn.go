@@ -20,27 +20,27 @@ type (
 		writeBuf   *bytes.Buffer
 		mu         sync.Mutex
 		lastDbTime time.Time
-		options    *Options
+		option     *Option
 	}
 )
 
-func dial(options *Options) (c net.Conn, err error) {
-	if options.ConnectTimeout > 0 {
-		c, err = net.DialTimeout(options.Network, options.Addr, options.ConnectTimeout)
+func dial(option *Option) (c net.Conn, err error) {
+	if option.ConnectTimeout > 0 {
+		c, err = net.DialTimeout(option.Network, option.Addr, option.ConnectTimeout)
 	} else {
-		c, err = net.Dial(options.Network, options.Addr)
+		c, err = net.Dial(option.Network, option.Addr)
 	}
 	return
 }
 
-func newConn(netConn net.Conn, options *Options) *conn {
+func newConn(netConn net.Conn, option *Option) *conn {
 	c := &conn{
 		sock:       netConn,
 		writeBuf:   bytes.NewBuffer(make([]byte, 8192)),
 		recvBuf:    bufio.NewReaderSize(netConn, 8192),
 		mu:         sync.Mutex{},
 		lastDbTime: time.Now(),
-		options:    options,
+		option:     option,
 	}
 	return c
 }
@@ -184,20 +184,20 @@ func (c *conn) writeCommand(cmd string, args []interface{}) error {
 }
 
 func (c *conn) Ping(now time.Time) {
-	if now.After(c.lastDbTime.Add(c.options.IdleTimeout)) {
+	if now.After(c.lastDbTime.Add(c.option.IdleTimeout)) {
 		c.Do("ping")
 	}
 }
 
 func doReconnect(c *conn, err error, cmd string) {
 	for {
-		if c.options.OnConnEvent != nil {
-			c.options.OnConnEvent(fmt.Sprintf("On write command error [%v] [%v] [%p]", err, cmd, c))
+		if c.option.OnConnEvent != nil {
+			c.option.OnConnEvent(fmt.Sprintf("On write command error [%v] [%v] [%p]", err, cmd, c))
 		}
 		time.Sleep(time.Second)
-		netC, err := dial(c.options)
+		netC, err := dial(c.option)
 		if err == nil {
-			c.options.OnConnEvent(fmt.Sprintf("On reconnected successful! [%v] [%p]", cmd, c))
+			c.option.OnConnEvent(fmt.Sprintf("On reconnected successful! [%v] [%p]", cmd, c))
 			c.sock = netC
 			c.recvBuf = bufio.NewReaderSize(c.sock, 8192)
 			break
@@ -212,16 +212,16 @@ func (c *conn) Do(cmd string, args ...interface{}) *Reply {
 	)
 	c.mu.Lock()
 	for {
-		if c.options.WriteTimeout != 0 {
-			c.sock.SetWriteDeadline(time.Now().Add(c.options.WriteTimeout))
+		if c.option.WriteTimeout != 0 {
+			c.sock.SetWriteDeadline(time.Now().Add(c.option.WriteTimeout))
 		}
 		err = c.writeCommand(cmd, args)
 		if err != nil {
 			doReconnect(c, err, cmd)
 			continue
 		}
-		if c.options.ReadTimeout != 0 {
-			c.sock.SetReadDeadline(time.Now().Add(c.options.ReadTimeout))
+		if c.option.ReadTimeout != 0 {
+			c.sock.SetReadDeadline(time.Now().Add(c.option.ReadTimeout))
 		}
 
 		reply, err = c.readReply()

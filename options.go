@@ -2,7 +2,7 @@ package ssdb
 
 import "time"
 
-type Options struct {
+type Option struct {
 	Addr           string
 	Network        string
 	PoolSize       int

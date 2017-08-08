@@ -1,7 +1,6 @@
 package ssdb
 
 import (
-	"encoding/base64"
 	"fmt"
 	"sync"
 	"testing"
@@ -12,19 +11,26 @@ var pool *Pool
 var poolErr error
 
 func init() {
-	pool, poolErr = NewPool(
-		&Options{
-			Addr:           "localhost:8888",
-			Network:        "tcp",
-			PoolSize:       16,
-			ConnectTimeout: time.Duration(time.Second),
-			ReadTimeout:    time.Duration(time.Second * 3),
-			WriteTimeout:   time.Duration(time.Second * 2),
-			IdleTimeout:    time.Duration(time.Second * 60),
-			OnConnEvent: func(msg string) {
-				fmt.Println(msg)
-			},
-		})
+	timeout := func(opt *Option) {
+		opt.ConnectTimeout = time.Duration(time.Second)
+		opt.ReadTimeout = time.Duration(time.Second * 3)
+		opt.WriteTimeout = time.Duration(time.Second * 2)
+		opt.IdleTimeout = time.Duration(time.Second * 60)
+	}
+
+	hostAddr := func(opt *Option) {
+		opt.Addr = "localhost:8888"
+		opt.Network = "tcp"
+	}
+	poolSize := func(opt *Option) {
+		opt.PoolSize = 16
+	}
+	onConnEvent := func(opt *Option) {
+		opt.OnConnEvent = func(msg string) {
+			fmt.Println(msg)
+		}
+	}
+	pool, poolErr = NewPool(hostAddr, timeout, poolSize, onConnEvent)
 	if poolErr != nil {
 		panic(poolErr)
 	}
@@ -93,10 +99,4 @@ func TestMulti_Get_Order(t *testing.T) {
 		t.Log("Result", strs[i], strs[i+1])
 	}
 	pool.Do("hclear", "test")
-}
-
-func TestAAA(t *testing.T) {
-	reply := pool.Do("hget", "player:base:info", 1001)
-	t.Log(base64.StdEncoding.EncodeToString(reply.Bytes()))
-	pool.Release()
 }

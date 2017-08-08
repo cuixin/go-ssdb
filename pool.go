@@ -16,19 +16,23 @@ var (
 	releaseWait sync.WaitGroup
 )
 
-func NewPool(options *Options) (*Pool, error) {
+func NewPool(options ...func(*Option)) (*Pool, error) {
+	opt := &Option{}
+	for _, option := range options {
+		option(opt)
+	}
 	pool := &Pool{
 		mu:     sync.Mutex{},
-		cons:   make([]*conn, options.PoolSize),
+		cons:   make([]*conn, opt.PoolSize),
 		curr:   0,
 		ticker: time.NewTicker(time.Duration(5 * time.Second)),
 	}
-	for j := 0; j < options.PoolSize; j++ {
-		netcon, err := dial(options)
+	for j := 0; j < opt.PoolSize; j++ {
+		netcon, err := dial(opt)
 		if err != nil {
 			return nil, err
 		}
-		pool.cons[j] = newConn(netcon, options)
+		pool.cons[j] = newConn(netcon, opt)
 	}
 	go func() {
 		for t := range pool.ticker.C {
